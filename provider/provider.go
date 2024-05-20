@@ -2,106 +2,100 @@ package provider
 
 import (
 	"context"
-	"time"
+	"sync"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
-	"k8s.io/metrics/pkg/apis/custom_metrics"
+	"k8s.io/metrics/pkg/apis/external_metrics"
 
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider/defaults"
-	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider/helpers"
 )
 
-type yourProvider struct {
-	defaults.DefaultCustomMetricsProvider
+type externalMetric struct {
+	info   provider.ExternalMetricInfo
+	labels map[string]string
+	value  external_metrics.ExternalMetricValue
+}
+
+type ackbarProvider struct {
+	//	defaults.DefaultCustomMetricsProvider
 	defaults.DefaultExternalMetricsProvider
 	client dynamic.Interface
 	mapper apimeta.RESTMapper
 
-	// just increment values when they're requested
-	values map[provider.CustomMetricInfo]int64
+	valuesLock      sync.RWMutex
+	externalMetrics []externalMetric
+
+	ackbarURL string
 }
 
-func NewProvider(client dynamic.Interface, mapper apimeta.RESTMapper) provider.CustomMetricsProvider {
-	return &yourProvider{
-		client: client,
-		mapper: mapper,
-		values: make(map[provider.CustomMetricInfo]int64),
-	}
-}
-
-// valueFor fetches a value from the fake list and increments it.
-func (p *yourProvider) valueFor(info provider.CustomMetricInfo) (int64, error) {
-	// normalize the value so that you treat plural resources and singular
-	// resources the same (e.g. pods vs pod)
-	info, _, err := info.Normalized(p.mapper)
-	if err != nil {
-		return 0, err
-	}
-
-	value := p.values[info]
-	value += 1
-	p.values[info] = value
-
-	return value, nil
-}
-
-// metricFor constructs a result for a single metric value.
-func (p *yourProvider) metricFor(value int64, name types.NamespacedName, info provider.CustomMetricInfo) (*custom_metrics.MetricValue, error) {
-	// construct a reference referring to the described object
-	objRef, err := helpers.ReferenceFor(p.mapper, name, info)
-	if err != nil {
-		return nil, err
-	}
-
-	return &custom_metrics.MetricValue{
-		DescribedObject: objRef,
-		Metric: custom_metrics.MetricIdentifier{
-			Name: info.Metric,
+var testingExternalMetrics = []externalMetric{
+	{
+		info: provider.ExternalMetricInfo{
+			Metric: "my-external-metric",
 		},
-		// you'll want to use the actual timestamp in a real adapter
-		Timestamp: metav1.Time{time.Now()},
-		Value:     *resource.NewMilliQuantity(value*100, resource.DecimalSI),
-	}, nil
+		labels: map[string]string{"foo": "bar"},
+		value: external_metrics.ExternalMetricValue{
+			MetricName: "my-external-metric",
+			MetricLabels: map[string]string{
+				"foo": "bar",
+			},
+			Value: *resource.NewQuantity(42, resource.DecimalSI),
+		},
+	},
+	{
+		info: provider.ExternalMetricInfo{
+			Metric: "my-external-metric",
+		},
+		labels: map[string]string{"foo": "baz"},
+		value: external_metrics.ExternalMetricValue{
+			MetricName: "my-external-metric",
+			MetricLabels: map[string]string{
+				"foo": "baz",
+			},
+			Value: *resource.NewQuantity(43, resource.DecimalSI),
+		},
+	},
+	{
+		info: provider.ExternalMetricInfo{
+			Metric: "other-external-metric",
+		},
+		labels: map[string]string{},
+		value: external_metrics.ExternalMetricValue{
+			MetricName:   "other-external-metric",
+			MetricLabels: map[string]string{},
+			Value:        *resource.NewQuantity(44, resource.DecimalSI),
+		},
+	},
 }
 
-func (p *yourProvider) GetMetricByName(ctx context.Context, name types.NamespacedName, info provider.CustomMetricInfo, metricSelector labels.Selector) (*custom_metrics.MetricValue, error) {
-	value, err := p.valueFor(info)
-	if err != nil {
-		return nil, err
+func NewProvider(client dynamic.Interface, mapper apimeta.RESTMapper, ackbarUrl string) provider.ExternalMetricsProvider {
+	return &ackbarProvider{
+		client:          client,
+		mapper:          mapper,
+		ackbarURL:       ackbarUrl,
+		externalMetrics: testingExternalMetrics,
 	}
-	return p.metricFor(value, name, info)
 }
 
-func (p *yourProvider) GetMetricBySelector(ctx context.Context, namespace string, selector labels.Selector, info provider.CustomMetricInfo, metricSelector labels.Selector) (*custom_metrics.MetricValueList, error) {
-	totalValue, err := p.valueFor(info)
-	if err != nil {
-		return nil, err
-	}
+func (p *ackbarProvider) GetExternalMetric(_ context.Context, _ string, metricSelector labels.Selector, info provider.ExternalMetricInfo) (*external_metrics.ExternalMetricValueList, error) {
+	p.valuesLock.RLock()
+	defer p.valuesLock.RUnlock()
 
-	names, err := helpers.ListObjectNames(p.mapper, p.client, namespace, selector, info)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make([]custom_metrics.MetricValue, len(names))
-	for i, name := range names {
-		// in a real adapter, you might want to consider pre-computing the
-		// object reference created in metricFor, instead of recomputing it
-		// for each object.
-		value, err := p.metricFor(100*totalValue/int64(len(res)), types.NamespacedName{Namespace: namespace, Name: name}, info)
-		if err != nil {
-			return nil, err
+	matchingMetrics := []external_metrics.ExternalMetricValue{}
+	for _, metric := range p.externalMetrics {
+		if metric.info.Metric == info.Metric &&
+			metricSelector.Matches(labels.Set(metric.labels)) {
+			metricValue := metric.value
+			metricValue.Timestamp = metav1.Now()
+			matchingMetrics = append(matchingMetrics, metricValue)
 		}
-		res[i] = *value
 	}
-
-	return &custom_metrics.MetricValueList{
-		Items: res,
+	return &external_metrics.ExternalMetricValueList{
+		Items: matchingMetrics,
 	}, nil
 }

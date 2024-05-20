@@ -20,33 +20,41 @@ type YourAdapter struct {
 
 	// the message printed on startup
 	Message string
+
+	// The URL for the ackbar instance to use for metrics
+	AckbarURL string
 }
 
 func main() {
 	logs.InitLogs()
 	defer logs.FlushLogs()
 
-	// initialize the flags, with one custom flag for the message
+	// initialize the flags, with one custom flag for the message and one for the URL of ackbar
 	cmd := &YourAdapter{}
 	cmd.Flags().StringVar(&cmd.Message, "msg", "starting adapter...", "startup message")
+	cmd.Flags().StringVar(&cmd.AckbarURL, "ackbar-url", "", "The URL of the ackbar instance to use for metrics")
+
 	// make sure you get the klog flags
 	logs.AddGoFlags(flag.CommandLine)
 	cmd.Flags().AddGoFlagSet(flag.CommandLine)
 	cmd.Flags().Parse(os.Args)
 
-	provider := cmd.makeProviderOrDie()
-	cmd.WithCustomMetrics(provider)
-	// you could also set up external metrics support,
-	// if your provider supported it:
-	// cmd.WithExternalMetrics(provider)
+	if cmd.AckbarURL == "" {
+		klog.Fatalf("ackbar URL not configured. Please set command line flag --ackbar-url")
+	}
 
+	provider := cmd.makeProviderOrDie()
+	// cmd.WithCustomMetrics(provider)
+	cmd.WithExternalMetrics(provider)
+
+	klog.Infof("ackbar URL configured as %s", cmd.AckbarURL)
 	klog.Infof(cmd.Message)
 	if err := cmd.Run(wait.NeverStop); err != nil {
 		klog.Fatalf("unable to run custom metrics adapter: %v", err)
 	}
 }
 
-func (a *YourAdapter) makeProviderOrDie() provider.CustomMetricsProvider {
+func (a *YourAdapter) makeProviderOrDie() provider.ExternalMetricsProvider {
 	client, err := a.DynamicClient()
 	if err != nil {
 		klog.Fatalf("unable to construct dynamic client: %v", err)
@@ -57,5 +65,5 @@ func (a *YourAdapter) makeProviderOrDie() provider.CustomMetricsProvider {
 		klog.Fatalf("unable to construct discovery REST mapper: %v", err)
 	}
 
-	return yourprov.NewProvider(client, mapper)
+	return yourprov.NewProvider(client, mapper, a.AckbarURL)
 }
