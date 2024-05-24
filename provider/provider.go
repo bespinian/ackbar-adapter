@@ -83,7 +83,9 @@ func (p *ackbarProvider) GetExternalMetric(_ context.Context, _ string, metricSe
 			info: provider.ExternalMetricInfo{
 				Metric: "partition-to-worker-ratio",
 			},
-			labels: map[string]string{},
+			labels: map[string]string{
+				"context": context.ID,
+			},
 			value: external_metrics.ExternalMetricValue{
 				MetricName: "partition-to-worker-ratio",
 				MetricLabels: map[string]string{
