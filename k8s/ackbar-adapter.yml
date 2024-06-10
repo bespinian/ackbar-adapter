@@ -51,7 +51,7 @@ spec:
       serviceAccountName: custom-metrics-apiserver
       containers:
         - name: custom-metrics-apiserver
-          image: bespinian/ackbar-adapter:0.0.3
+          image: bespinian/ackbar-adapter:0.0.6
           imagePullPolicy: Always
           args:
             - --secure-port=6443

@@ -2,6 +2,11 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
 	"sync"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -9,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/klog/v2"
 	"k8s.io/metrics/pkg/apis/external_metrics"
 
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
@@ -33,52 +39,19 @@ type ackbarProvider struct {
 	ackbarURL string
 }
 
-var testingExternalMetrics = []externalMetric{
-	{
-		info: provider.ExternalMetricInfo{
-			Metric: "my-external-metric",
-		},
-		labels: map[string]string{"foo": "bar"},
-		value: external_metrics.ExternalMetricValue{
-			MetricName: "my-external-metric",
-			MetricLabels: map[string]string{
-				"foo": "bar",
-			},
-			Value: *resource.NewQuantity(42, resource.DecimalSI),
-		},
-	},
-	{
-		info: provider.ExternalMetricInfo{
-			Metric: "my-external-metric",
-		},
-		labels: map[string]string{"foo": "baz"},
-		value: external_metrics.ExternalMetricValue{
-			MetricName: "my-external-metric",
-			MetricLabels: map[string]string{
-				"foo": "baz",
-			},
-			Value: *resource.NewQuantity(43, resource.DecimalSI),
-		},
-	},
-	{
-		info: provider.ExternalMetricInfo{
-			Metric: "other-external-metric",
-		},
-		labels: map[string]string{},
-		value: external_metrics.ExternalMetricValue{
-			MetricName:   "other-external-metric",
-			MetricLabels: map[string]string{},
-			Value:        *resource.NewQuantity(44, resource.DecimalSI),
-		},
-	},
+type ackbarContexts []struct {
+	ID                      string  `json:"id"`
+	Name                    string  `json:"name"`
+	LivenessIntervalSeconds int     `json:"livenessIntervalSeconds"`
+	MaxPartitionsPerWorker  int     `json:"maxPartitionsPerWorker"`
+	PartitionToWorkerRatio  float64 `json:"partitionToWorkerRatio"`
 }
 
 func NewProvider(client dynamic.Interface, mapper apimeta.RESTMapper, ackbarUrl string) provider.ExternalMetricsProvider {
 	return &ackbarProvider{
-		client:          client,
-		mapper:          mapper,
-		ackbarURL:       ackbarUrl,
-		externalMetrics: testingExternalMetrics,
+		client:    client,
+		mapper:    mapper,
+		ackbarURL: ackbarUrl,
 	}
 }
 
@@ -86,8 +59,45 @@ func (p *ackbarProvider) GetExternalMetric(_ context.Context, _ string, metricSe
 	p.valuesLock.RLock()
 	defer p.valuesLock.RUnlock()
 
+	contextsUrl := fmt.Sprintf("%s/contexts", p.ackbarURL)
+	resp, err := http.Get(contextsUrl)
+	if err != nil {
+		klog.Errorf("No response from %s: %v", p.ackbarURL, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	var contexts ackbarContexts
+	if err := json.Unmarshal(body, &contexts); err != nil {
+		klog.Errorf("Cannot unmarshal JSON: %v", err)
+	}
+
+	contextMetrics := []externalMetric{}
+
+	for _, context := range contexts {
+		partitionToWorkerRationString := strconv.FormatFloat(context.PartitionToWorkerRatio, 'f', -1, 64)
+		metricValue, err := resource.ParseQuantity(partitionToWorkerRationString)
+		if err != nil {
+			klog.Errorf("Cannot convert ratio to quantity: %v", err)
+		}
+		contextMetrics = append(contextMetrics, externalMetric{
+			info: provider.ExternalMetricInfo{
+				Metric: "partition-to-worker-ratio",
+			},
+			labels: map[string]string{
+				"context": context.ID,
+			},
+			value: external_metrics.ExternalMetricValue{
+				MetricName: "partition-to-worker-ratio",
+				MetricLabels: map[string]string{
+					"context": context.ID,
+				},
+				Value: metricValue,
+			},
+		})
+	}
+
 	matchingMetrics := []external_metrics.ExternalMetricValue{}
-	for _, metric := range p.externalMetrics {
+	for _, metric := range contextMetrics {
 		if metric.info.Metric == info.Metric &&
 			metricSelector.Matches(labels.Set(metric.labels)) {
 			metricValue := metric.value
