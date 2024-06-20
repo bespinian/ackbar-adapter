@@ -1,6 +1,6 @@
 # ackbar-adapter
 
-A custom metrics adapter which makes `ackbar`'s `partitionToWorkerRatio` available as an external metric in the metrics API of Kubernetes.
+A custom metrics adapter which makes [ackbar](https://github.com/bespinian/ackbar)'s `partitionToWorkerRatio` available as an external metric in the metrics API of Kubernetes.
 
 ## Deployment
 
