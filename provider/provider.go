@@ -9,11 +9,9 @@ import (
 	"strconv"
 	"sync"
 
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/klog/v2"
 	"k8s.io/metrics/pkg/apis/external_metrics"
 
@@ -30,8 +28,6 @@ type externalMetric struct {
 type ackbarProvider struct {
 	//	defaults.DefaultCustomMetricsProvider
 	defaults.DefaultExternalMetricsProvider
-	client dynamic.Interface
-	mapper apimeta.RESTMapper
 
 	valuesLock      sync.RWMutex
 	externalMetrics []externalMetric
@@ -47,10 +43,8 @@ type ackbarContexts []struct {
 	PartitionToWorkerRatio  float64 `json:"partitionToWorkerRatio"`
 }
 
-func NewProvider(client dynamic.Interface, mapper apimeta.RESTMapper, ackbarUrl string) provider.ExternalMetricsProvider {
+func NewProvider(ackbarUrl string) provider.ExternalMetricsProvider {
 	return &ackbarProvider{
-		client:    client,
-		mapper:    mapper,
 		ackbarURL: ackbarUrl,
 	}
 }

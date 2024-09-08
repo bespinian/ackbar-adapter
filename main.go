@@ -11,11 +11,11 @@ import (
 	basecmd "sigs.k8s.io/custom-metrics-apiserver/pkg/cmd"
 	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
 
-	// make this the path to the provider that you just wrote
-	yourprov "bespinian.io/ackbar-adapter/provider"
+	// this is the path to our provider
+	ackbarProvider "bespinian.io/ackbar-adapter/provider"
 )
 
-type YourAdapter struct {
+type AckbarAdapter struct {
 	basecmd.AdapterBase
 
 	// the message printed on startup
@@ -30,7 +30,7 @@ func main() {
 	defer logs.FlushLogs()
 
 	// initialize the flags, with one custom flag for the message and one for the URL of ackbar
-	cmd := &YourAdapter{}
+	cmd := &AckbarAdapter{}
 	cmd.Flags().StringVar(&cmd.Message, "msg", "starting adapter...", "startup message")
 	cmd.Flags().StringVar(&cmd.AckbarURL, "ackbar-url", "", "The URL of the ackbar instance to use for metrics")
 
@@ -44,7 +44,6 @@ func main() {
 	}
 
 	provider := cmd.makeProviderOrDie()
-	// cmd.WithCustomMetrics(provider)
 	cmd.WithExternalMetrics(provider)
 
 	klog.Infof("ackbar URL configured as %s", cmd.AckbarURL)
@@ -54,16 +53,6 @@ func main() {
 	}
 }
 
-func (a *YourAdapter) makeProviderOrDie() provider.ExternalMetricsProvider {
-	client, err := a.DynamicClient()
-	if err != nil {
-		klog.Fatalf("unable to construct dynamic client: %v", err)
-	}
-
-	mapper, err := a.RESTMapper()
-	if err != nil {
-		klog.Fatalf("unable to construct discovery REST mapper: %v", err)
-	}
-
-	return yourprov.NewProvider(client, mapper, a.AckbarURL)
+func (a *AckbarAdapter) makeProviderOrDie() provider.ExternalMetricsProvider {
+	return ackbarProvider.NewProvider(a.AckbarURL)
 }
