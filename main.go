@@ -9,7 +9,6 @@ import (
 	"k8s.io/klog/v2"
 
 	basecmd "sigs.k8s.io/custom-metrics-apiserver/pkg/cmd"
-	"sigs.k8s.io/custom-metrics-apiserver/pkg/provider"
 
 	// this is the path to our provider
 	ackbarProvider "bespinian.io/ackbar-adapter/provider"
@@ -43,7 +42,7 @@ func main() {
 		klog.Fatalf("ackbar URL not configured. Please set command line flag --ackbar-url")
 	}
 
-	provider := cmd.makeProviderOrDie()
+	provider := ackbarProvider.NewProvider(cmd.AckbarURL)
 	cmd.WithExternalMetrics(provider)
 
 	klog.Infof("ackbar URL configured as %s", cmd.AckbarURL)
@@ -51,8 +50,4 @@ func main() {
 	if err := cmd.Run(wait.NeverStop); err != nil {
 		klog.Fatalf("unable to run custom metrics adapter: %v", err)
 	}
-}
-
-func (a *AckbarAdapter) makeProviderOrDie() provider.ExternalMetricsProvider {
-	return ackbarProvider.NewProvider(a.AckbarURL)
 }
